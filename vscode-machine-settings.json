@@ -1,0 +1,6 @@
+{
+    "markdown-preview-enhanced.plantumlJarPath": "~/.local/share/plantuml/plantuml.jar",
+    "markdown-preview-enhanced.plantumlServer": "",
+    "plantuml.jar": "~/.local/share/plantuml/plantuml.jar",
+    "plantuml.render": "Local"
+}

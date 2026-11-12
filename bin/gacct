@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# gacct - switch between multiple GitHub / Azure DevOps accounts.
+set -euo pipefail
+
+CONF="${GACCT_CONF:-$HOME/.config/gacct/accounts.conf}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/gacct"
+STATE="$STATE_DIR/active"
+
+usage() {
+  cat <<'EOF'
+gacct - manage multiple git accounts
+
+  gacct list                 show accounts, token status, active marker
+  gacct current              print active account
+  gacct use <name>           set active account (default for unmatched repos)
+                             + global commit email
+  gacct here [<name>]        configure the current repo: commit email and
+                             credential username (auto-detected from origin
+                             if <name> omitted)
+  gacct clone <name> <url> [dir]
+                             clone using that account and configure the repo
+  gacct gh <name> <args...>  run the GitHub CLI as that account
+  gacct token <name>         print the account's token (for scripting)
+  gacct test [<name>]        check the token against the API
+EOF
+}
+
+die() { echo "gacct: $*" >&2; exit 1; }
+[[ -r "$CONF" ]] || die "config not found: $CONF"
+
+accounts() { awk '!/^[[:space:]]*#/ && NF>=6 {print $1, $2, $3, $4, $5, $6}' "$CONF"; }
+author_name() { sed -n 's/^#@name[[:space:]]\+//p' "$CONF" | head -1; }
+
+get() { # get <name> -> sets A_NAME A_HOST A_USER A_TOK A_EMAIL A_OWNERS
+  local line
+  line="$(accounts | awk -v n="$1" '$1==n' | head -1)"
+  [[ -n "$line" ]] || die "unknown account '$1' (see: gacct list)"
+  read -r A_NAME A_HOST A_USER A_TOK A_EMAIL A_OWNERS <<<"$line"
+}
+
+active() { cat "$STATE" 2>/dev/null || true; }
+
+# Resolve account for a remote URL using the credential helper's logic.
+account_for_url() {
+  local url="$1" host path user=""
+  url="${url#https://}"; url="${url#http://}"
+  if [[ "$url" == git@* || "$url" == ssh://* ]]; then
+    url="${url#ssh://}"; url="${url#git@}"; url="${url/://}"
+  fi
+  if [[ "$url" == *@*/* && "${url%%/*}" == *@* ]]; then user="${url%%@*}"; url="${url#*@}"; fi
+  host="${url%%/*}"; path="${url#*/}"
+  [[ "$host" == ssh.dev.azure.com ]] && { host=dev.azure.com; path="${path#v3/}"; }
+  local out
+  out="$(printf 'protocol=https\nhost=%s\npath=%s\n%s\n' "$host" "$path" \
+        "${user:+username=$user}" | GACCT_NOTOKEN_OK=1 git-credential-gacct get 2>/dev/null || true)"
+  local u; u="$(sed -n 's/^username=//p' <<<"$out")"
+  [[ -n "$u" ]] || return 1
+  accounts | awk -v u="$u" -v h="$host" '$3==u && $2==h {print $1; exit}'
+}
+
+configure_repo() { # configure_repo <name> [dir]
+  get "$1"
+  local dir="${2:-.}" name
+  name="$(author_name)"
+  git -C "$dir" config user.email "$A_EMAIL"
+  [[ -n "$name" ]] && git -C "$dir" config user.name "$name"
+  # Pin the credential username to THIS repo's remote only (scoping it to the
+  # whole host would leak into every other URL used from inside this repo).
+  git -C "$dir" config --unset-all "credential.https://$A_HOST.username" 2>/dev/null || true
+  local url
+  url="$(git -C "$dir" remote get-url origin 2>/dev/null || true)"
+  if [[ "$url" == https://* ]]; then
+    url="https://$(sed -E 's#^https://([^@/]*@)?##' <<<"$url")"
+    git -C "$dir" config "credential.$url.username" "$A_USER"
+  fi
+  echo "repo $(cd "$dir" && pwd) -> $A_NAME ($A_USER, $A_EMAIL)"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  list|ls)
+    cur="$(active)"
+    printf '  %-10s %-14s %-20s %-22s %s\n' NAME HOST USER TOKEN EMAIL
+    while read -r n h u t e o; do
+      mark=" "; [[ "$n" == "$cur" ]] && mark="*"
+      if [[ -n "${!t:-}" ]]; then ts="\$$t ✓"; else ts="\$$t ✗"; fi
+      printf '%s %-10s %-14s %-20s %-22s %s\n' "$mark" "$n" "$h" "$u" "$ts" "$e"
+    done < <(accounts)
+    ;;
+  current) a="$(active)"; echo "${a:-<none, first account per host is default>}" ;;
+  use)
+    [[ $# -ge 1 ]] || die "usage: gacct use <name>"
+    get "$1"
+    mkdir -p "$STATE_DIR"; echo "$A_NAME" >"$STATE"
+    git config --global user.email "$A_EMAIL"
+    n="$(author_name)"; [[ -n "$n" ]] && git config --global user.name "$n"
+    echo "active account: $A_NAME ($A_USER, $A_EMAIL)"
+    [[ -n "${!A_TOK:-}" ]] || echo "warning: \$$A_TOK is not set — add it as an Ona secret" >&2
+    ;;
+  here)
+    git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repo"
+    if [[ $# -ge 1 ]]; then configure_repo "$1"
+    else
+      url="$(git remote get-url origin 2>/dev/null)" || die "no origin remote; pass <name>"
+      a="$(account_for_url "$url")" || die "could not determine account for $url; pass <name>"
+      configure_repo "$a"
+    fi
+    ;;
+  clone)
+    [[ $# -ge 2 ]] || die "usage: gacct clone <name> <url> [dir]"
+    get "$1"; url="$2"; dir="${3:-$(basename "${url%.git}")}"
+    git -c "credential.https://$A_HOST.username=$A_USER" clone "$url" "$dir"
+    configure_repo "$1" "$dir"
+    ;;
+  gh)
+    [[ $# -ge 1 ]] || die "usage: gacct gh <name> <gh args...>"
+    get "$1"; shift
+    [[ "$A_HOST" == github.com ]] || die "$A_NAME is not a GitHub account"
+    command -v gh >/dev/null || die "gh CLI not installed"
+    GH_TOKEN="${!A_TOK:?\$$A_TOK not set}" exec gh "$@"
+    ;;
+  token)
+    [[ $# -ge 1 ]] || die "usage: gacct token <name>"
+    get "$1"; printf '%s\n' "${!A_TOK:?\$$A_TOK not set}"
+    ;;
+  test)
+    names=("$@"); ((${#names[@]})) || mapfile -t names < <(accounts | awk '{print $1}')
+    for n in "${names[@]}"; do
+      get "$n"; tok="${!A_TOK:-}"
+      if [[ -z "$tok" ]]; then echo "$n: \$$A_TOK not set"; continue; fi
+      if [[ "$A_HOST" == github.com ]]; then
+        login="$(curl -fsS -H "Authorization: Bearer $tok" https://api.github.com/user 2>/dev/null \
+                 | sed -n 's/.*"login": *"\([^"]*\)".*/\1/p')"
+        [[ -n "$login" ]] && echo "$n: OK (logged in as $login)" || echo "$n: FAILED"
+      else
+        code="$(curl -s -o /dev/null -w '%{http_code}' -u ":$tok" \
+                "https://dev.azure.com/$A_USER/_apis/projects?api-version=7.0")"
+        [[ "$code" == 200 ]] && echo "$n: OK (org $A_USER)" || echo "$n: FAILED (HTTP $code)"
+      fi
+    done
+    ;;
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command '$cmd' (see: gacct help)" ;;
+esac

@@ -1,0 +1,28 @@
+# Template for accounts.conf. The real file lives in the private repo
+# (config/accounts.conf); install.sh links it to ~/.config/gacct/accounts.conf.
+#
+# NEVER put tokens in accounts.conf: put the NAME of an environment variable that
+# holds the token, and define that variable as a secret in Ona
+# (User settings -> Secrets).
+#
+# Columns (whitespace separated, one account per line):
+#   name       short alias used with `gacct use <name>`
+#   host       github.com | dev.azure.com
+#   username   GitHub login (for ADO: the organization name)
+#   token_var  env var holding the PAT
+#   email      commit email for this account
+#   owners     comma-separated GitHub owners/orgs (or ADO orgs) that should
+#              automatically use this account; globs allowed (MyOrg-*); "-" for none
+#
+# The first github.com line is the default when nothing else matches.
+#
+# name      host            username          token_var             email                       owners
+work        github.com      jdoe_work         GITHUB_TOKEN          jdoe@example.com            MyOrg-*
+personal    github.com      jdoe              PRIVATE_GITHUB_TOKEN  jdoe@users.noreply.github.com jdoe
+ado         dev.azure.com   myadoorg          ADO_TOKEN             jdoe@example.com            myadoorg
+
+# Commit author name (used for all accounts)
+#@name Your Name
+
+# Default Azure DevOps project for az boards / az repos
+#@ado_project myproject

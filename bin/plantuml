@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs the PlantUML jar that scripts/install-tools.sh installs (pinned version,
+# checksum-verified). Example: plantuml -tsvg diagram.puml
+jar="$HOME/.local/share/plantuml/plantuml.jar"
+[ -f "$jar" ] || { echo "plantuml: $jar missing, run scripts/install-tools.sh" >&2; exit 1; }
+command -v java >/dev/null 2>&1 || { echo "plantuml: java missing, run scripts/install-tools.sh" >&2; exit 1; }
+exec java -Djava.awt.headless=true -jar "$jar" "$@"
