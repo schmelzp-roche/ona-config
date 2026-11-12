@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Merges our Claude Code preferences into ~/.claude/settings.json without
 # touching the keys Ona writes there (env with the proxy URL and headers):
-#   - no "Co-Authored-By: Claude" trailer in commits, no attribution in PRs
+#   - no "Co-Authored-By: Claude" trailer in commits, no attribution in PRs and
+#     no session link (attribution.sessionUrl)
 # Idempotent.
 set -euo pipefail
 
@@ -13,6 +14,6 @@ mkdir -p "$(dirname "$SETTINGS")"
 [[ -s "$SETTINGS" ]] || echo '{}' >"$SETTINGS"
 
 tmp="$(mktemp)"
-jq '.attribution = {"commit": "", "pr": ""} | .includeCoAuthoredBy = false' \
+jq '.attribution = {"commit": "", "pr": "", "sessionUrl": false} | .includeCoAuthoredBy = false' \
   "$SETTINGS" >"$tmp" && mv "$tmp" "$SETTINGS"
 log "commit/PR attribution disabled in $SETTINGS"
