@@ -75,7 +75,7 @@ Tip: run `gacct here` after cloning, so your commits use the matching email.
 extension) via the official apt repos (falls back to a no-root install). Set
 `SKIP_TOOLS=1` to skip.
 
-It also installs **Java**, **Graphviz** and **PlantUML** (see [PlantUML diagrams](#plantuml-diagrams)).
+It also installs **Java**, **Graphviz** and **PlantUML** (see [PlantUML diagrams](#plantuml-diagrams)), and **poppler-utils** (`pdftoppm`, `pdftotext`), so that Claude Code can read PDF files.
 
 - **gh** authenticates via `GITHUB_TOKEN` (work account). Personal account:
   `gacct gh personal <args>`.

@@ -2,7 +2,8 @@
 # Installs the GitHub CLI (gh), Azure CLI (az + azure-devops extension),
 # python3 + PyYAML (needed by the Claude Code skills), and Node.js (npx, for
 # cspell) + cargo-nextest (both needed by the custom-pre-pr-checks skill), and
-# Java + Graphviz + a pinned PlantUML jar (for PlantUML diagrams in Markdown docs).
+# Java + Graphviz + a pinned PlantUML jar (for PlantUML diagrams in Markdown docs),
+# and poppler-utils (pdftoppm, pdftotext: Claude Code reads PDF files with them).
 # Idempotent: skips anything already installed.
 # Uses official apt repos when apt + sudo are available, otherwise installs
 # into ~/.local without root.
@@ -136,6 +137,13 @@ install_plantuml_jar() {
   return $rc
 }
 
+# ---------------------------------------------------------------- poppler-utils (for reading PDF files)
+# pdftoppm renders PDF pages for the Read tool of Claude Code; pdftotext extracts the text.
+install_poppler_apt() {
+  apt_update
+  $SUDO apt-get install -y -qq --no-install-recommends poppler-utils >/dev/null
+}
+
 # ---------------------------------------------------------------- run
 if have gh; then log "gh already installed ($(gh --version | head -1))"
 else
@@ -189,10 +197,17 @@ else
   install_plantuml_jar || log "WARNING: plantuml install failed"
 fi
 
+if have pdftoppm && have pdftotext; then log "poppler-utils already installed"
+else
+  log "installing poppler-utils (for reading PDF files)..."
+  { can_apt && install_poppler_apt; } || log "WARNING: poppler-utils install failed (needs apt + sudo)"
+fi
+
 have gh && log "gh: $(command -v gh)"
 have az && log "az: $(command -v az)"
 have python3 && log "python3: $(command -v python3)"
 have npx && log "npx: $(command -v npx) (node $(node --version))"
 have cargo && cargo nextest --version >/dev/null 2>&1 && log "cargo-nextest: $(cargo nextest --version | head -1)"
 plantuml_ok && have java && log "plantuml: $PLANTUML_JAR ($PLANTUML_VERSION)"
+have pdftoppm && log "pdftoppm: $(command -v pdftoppm)"
 exit 0
