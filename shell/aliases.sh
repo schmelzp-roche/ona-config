@@ -17,6 +17,7 @@ alias cgf='cargo fmt'
 alias cgc='cargo llvm-cov nextest --show-missing-lines'
 
 # navigation
+alias ..="cd .."
 alias ...="cd ../.."
 alias uu="cd ../.."
 alias ....="cd ../../.."
