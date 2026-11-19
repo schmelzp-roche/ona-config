@@ -4,8 +4,8 @@ Personal dotfiles for [Ona](https://ona.com) environments. Its main job is to ma
 working with **multiple GitHub accounts and Azure DevOps** painless.
 
 > This repo is public: it contains **no tokens and no private configuration**. Tokens live
-> in Ona secrets; the accounts, the repository list and the Claude Code skills live in the
-> private repo [`ona-config-private`](https://github.com/schmelzp-roche/ona-config-private).
+> in Ona secrets; the accounts, the repository list and the Claude Code skills live in a
+> private repo next to this one (same URL + `-private`).
 
 ## Setup
 
@@ -14,6 +14,7 @@ working with **multiple GitHub accounts and Azure DevOps** painless.
    |------------------------|------------------------------------------------------------|
    | `GITHUB_TOKEN`         | PAT for the work GitHub account                            |
    | `PRIVATE_GITHUB_TOKEN` | PAT for the personal GitHub account; also clones the private repo |
+   | `ONA_PRIVATE_REPO`     | *(optional)* URL of the private repo, if not this repo's URL + `-private` |
    | `ADO_TOKEN`            | Azure DevOps PAT (scope: Code → Read & write)              |
    | `GACCT_DEFAULT`        | *(optional)* account to activate on startup, e.g. `work`   |
 2. **Link this repo** as your dotfiles repository in Ona (User settings → Preferences →
@@ -22,9 +23,8 @@ working with **multiple GitHub accounts and Azure DevOps** painless.
 
 ## Public and private parts
 
-`install.sh` first clones the private repo (`ONA_PRIVATE_REPO`, default
-`schmelzp-roche/ona-config-private`) into `/workspaces/workspaces/ona-config-private`
-(`ONA_PRIVATE_DIR`). It uses `PRIVATE_GITHUB_TOKEN` directly, because the credential helper
+`install.sh` first clones the private repo (this repo's URL + `-private`, or
+`ONA_PRIVATE_REPO`) into `/workspaces/workspaces/<repo name>` (`ONA_PRIVATE_DIR`). It uses `PRIVATE_GITHUB_TOKEN` directly, because the credential helper
 needs `accounts.conf`, which is in that repo. An existing clone is kept. It links the clone to
 `~/.config/gacct/private` and reads from it:
 

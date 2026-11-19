@@ -8,8 +8,16 @@ BIN="$HOME/.local/bin"
 CFG="$HOME/.config/gacct"
 
 REPOS_DIR="${REPOS_DIR:-/workspaces/workspaces}"
-PRIVATE_URL="${ONA_PRIVATE_REPO:-https://github.com/schmelzp-roche/ona-config-private.git}"
-PRIVATE_DIR="${ONA_PRIVATE_DIR:-$REPOS_DIR/ona-config-private}"
+# The private repo is this repo's URL + "-private" (e.g. .../dotfiles ->
+# .../dotfiles-private), so this public repo names neither the account nor the
+# private repo. ONA_PRIVATE_REPO overrides it. The clone directory is named after
+# the URL; without a URL, a clone from an earlier run is reused.
+own_url="$(git -C "$DOT" remote get-url origin 2>/dev/null | sed -E 's#//[^@/]*@#//#' || true)"
+PRIVATE_URL="${ONA_PRIVATE_REPO:-${own_url:+${own_url%.git}-private.git}}"
+if [[ -n "${ONA_PRIVATE_DIR:-}" ]]; then PRIVATE_DIR="$ONA_PRIVATE_DIR"
+elif [[ -n "$PRIVATE_URL" ]]; then PRIVATE_DIR="$REPOS_DIR/$(basename "$PRIVATE_URL" .git)"
+else PRIVATE_DIR="$(readlink -f "$CFG/private" 2>/dev/null || true)"
+fi
 export REPOS_DIR
 
 mkdir -p "$BIN" "$CFG"
@@ -27,9 +35,11 @@ took() { echo "[install] $1: $((SECONDS - STEP_T))s"; STEP_T=$SECONDS; }
 #    private repo. Clone it with PRIVATE_GITHUB_TOKEN directly: the credential
 #    helper needs accounts.conf, which is in that repo. An existing clone is kept.
 #    Without it, the public parts are still installed.
-if [[ ! -d "$PRIVATE_DIR/.git" ]]; then
-  mkdir -p "$(dirname "$PRIVATE_DIR")"
-  if [[ -n "${PRIVATE_GITHUB_TOKEN:-}" ]]; then
+if [[ -z "$PRIVATE_DIR" || ! -d "$PRIVATE_DIR/.git" ]]; then
+  if [[ -z "$PRIVATE_URL" ]]; then
+    echo "warning: no private repo URL (no origin, ONA_PRIVATE_REPO not set), not cloned" >&2
+  elif [[ -n "${PRIVATE_GITHUB_TOKEN:-}" ]]; then
+    mkdir -p "$(dirname "$PRIVATE_DIR")"
     # The helper reads the token from the environment, so it never shows up in argv.
     GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$PRIVATE_GITHUB_TOKEN"; }; f' \
@@ -39,7 +49,7 @@ if [[ ! -d "$PRIVATE_DIR/.git" ]]; then
     echo "warning: PRIVATE_GITHUB_TOKEN not set, $PRIVATE_URL not cloned" >&2
   fi
 fi
-if [[ -d "$PRIVATE_DIR/config" ]]; then
+if [[ -n "$PRIVATE_DIR" && -d "$PRIVATE_DIR/config" ]]; then
   ln -sfn "$PRIVATE_DIR" "$CFG/private"
   ln -sf "$CFG/private/config/accounts.conf" "$CFG/accounts.conf"
 else
