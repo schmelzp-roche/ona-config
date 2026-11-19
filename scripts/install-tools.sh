@@ -5,8 +5,10 @@
 # Java + Graphviz + a pinned PlantUML jar (for PlantUML diagrams in Markdown docs),
 # and poppler-utils (pdftoppm, pdftotext: Claude Code reads PDF files with them).
 # Idempotent: skips anything already installed.
-# Uses official apt repos when apt + sudo are available, otherwise installs
-# into ~/.local without root.
+# gh comes from the GitHub release tarball. The apt packages are collected and
+# installed with ONE apt-get update + install (the Ubuntu mirrors are slow
+# over plain HTTP from the Ona network, so they are switched to HTTPS). Without
+# apt + sudo, az and python3 fall back to a no-root install into ~/.local.
 set -uo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -20,29 +22,29 @@ if [[ $EUID -ne 0 ]]; then
 fi
 can_apt() { have apt-get && have dpkg && [[ "$SUDO" != "NONE" ]]; }
 ARCH_DEB="$(dpkg --print-architecture 2>/dev/null || true)"
-APT_UPDATED=""
-apt_update() { [[ -n "$APT_UPDATED" ]] || { $SUDO apt-get update -qq && APT_UPDATED=1; }; }
-apt_prereqs() {
-  apt_update
-  $SUDO apt-get install -y -qq ca-certificates curl gnupg >/dev/null
-  $SUDO install -d -m 755 /etc/apt/keyrings
+APT_PKGS=()
+
+# Ubuntu mirrors: HTTPS instead of HTTP (plain HTTP goes through a slow proxy:
+# 32 s vs 1.6 s for the same index file), no backports, no translation files.
+apt_tune() {
+  local f
+  printf 'Acquire::Languages "none";\nAcquire::Retries "3";\n' \
+    | $SUDO tee /etc/apt/apt.conf.d/99ona-config >/dev/null
+  dpkg -s ca-certificates >/dev/null 2>&1 || return 0
+  for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+    [[ -f "$f" ]] || continue
+    $SUDO sed -i -E -e 's#http://(archive|security)\.ubuntu\.com#https://\1.ubuntu.com#g' \
+      -e '/^Suites:/s/ [a-z]+-backports//g' -e '/^deb .*-backports /d' "$f"
+  done
 }
 
 # ---------------------------------------------------------------- gh
-install_gh_apt() {
-  apt_prereqs
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | $SUDO tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
-  $SUDO chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-  echo "deb [arch=$ARCH_DEB signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | $SUDO tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-  APT_UPDATED=""; apt_update
-  $SUDO apt-get install -y -qq gh >/dev/null
-}
 install_gh_local() {
   local arch ver tmp
   case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) return 1 ;; esac
-  ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
+  # The latest-release redirect avoids the rate limit of the GitHub API.
+  ver="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest)"
+  ver="${ver##*/v}"
   [[ -n "$ver" ]] || return 1
   tmp="$(mktemp -d)"
   curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
@@ -51,16 +53,15 @@ install_gh_local() {
 }
 
 # ---------------------------------------------------------------- az
-install_az_apt() {
-  apt_prereqs
+# Adds the Microsoft apt repo; azure-cli is installed with the other apt packages.
+add_az_repo() {
   . /etc/os-release
-  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor \
-    | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
-  $SUDO chmod go+r /etc/apt/keyrings/microsoft.gpg
-  printf 'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n' \
+  $SUDO install -d -m 755 /etc/apt/keyrings
+  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | $SUDO tee /etc/apt/keyrings/microsoft.asc >/dev/null || return 1
+  $SUDO chmod go+r /etc/apt/keyrings/microsoft.asc
+  printf 'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.asc\n' \
     "${VERSION_CODENAME:?}" "$ARCH_DEB" | $SUDO tee /etc/apt/sources.list.d/azure-cli.sources >/dev/null
-  APT_UPDATED=""; apt_update
-  $SUDO apt-get install -y -qq azure-cli >/dev/null
 }
 install_az_local() {
   # uv brings its own Python, so this works without root or system Python
@@ -69,10 +70,6 @@ install_az_local() {
 }
 
 # ---------------------------------------------------------------- python3 (for the Claude Code skills)
-install_python_apt() {
-  apt_update
-  $SUDO apt-get install -y -qq python3 python3-yaml >/dev/null
-}
 install_python_local() {
   # uv-managed Python, exposed as ~/.local/bin/python3
   have uv || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$BIN" INSTALLER_NO_MODIFY_PATH=1 sh >/dev/null
@@ -120,10 +117,6 @@ PLANTUML_VERSION="1.2025.4"
 PLANTUML_SHA256="cb8bca6301c114eb66c6e6c55b4cd1962f380616c622e964596a24f94246bc41"
 PLANTUML_JAR="$HOME/.local/share/plantuml/plantuml.jar"
 plantuml_ok() { [[ -f "$PLANTUML_JAR" ]] && echo "$PLANTUML_SHA256  $PLANTUML_JAR" | sha256sum -c --quiet - >/dev/null 2>&1; }
-install_java_graphviz_apt() {
-  apt_update
-  $SUDO apt-get install -y -qq --no-install-recommends default-jre-headless graphviz fonts-dejavu-core >/dev/null
-}
 install_plantuml_jar() {
   local tmp rc
   tmp="$(mktemp -d)"
@@ -139,22 +132,35 @@ install_plantuml_jar() {
 
 # ---------------------------------------------------------------- poppler-utils (for reading PDF files)
 # pdftoppm renders PDF pages for the Read tool of Claude Code; pdftotext extracts the text.
-install_poppler_apt() {
-  apt_update
-  $SUDO apt-get install -y -qq --no-install-recommends poppler-utils >/dev/null
-}
 
 # ---------------------------------------------------------------- run
 if have gh; then log "gh already installed ($(gh --version | head -1))"
 else
   log "installing gh..."
-  { can_apt && install_gh_apt; } || install_gh_local || log "WARNING: gh install failed"
+  install_gh_local || log "WARNING: gh install failed"
 fi
 
-if have az; then log "az already installed"
+# Collect the missing apt packages, then one apt-get update + install for all.
+if can_apt; then
+  if ! have az; then
+    if add_az_repo; then APT_PKGS+=(azure-cli); else log "WARNING: could not add the azure-cli apt repo"; fi
+  fi
+  have python3 && python3 -c 'import yaml' 2>/dev/null || APT_PKGS+=(python3 python3-yaml)
+  have java && have dot || APT_PKGS+=(default-jre-headless graphviz fonts-dejavu-core)
+  have pdftoppm && have pdftotext || APT_PKGS+=(poppler-utils)
+  if [[ ${#APT_PKGS[@]} -gt 0 ]]; then
+    log "installing via apt: ${APT_PKGS[*]}..."
+    apt_tune
+    $SUDO apt-get update -qq || log "WARNING: apt-get update had errors"
+    $SUDO apt-get install -y -qq --no-install-recommends "${APT_PKGS[@]}" >/dev/null \
+      || log "WARNING: apt install had errors"
+  fi
+fi
+
+if have az; then log "az available"
 else
-  log "installing az (takes a minute)..."
-  { can_apt && install_az_apt; } || install_az_local || log "WARNING: az install failed"
+  log "installing az without root (takes a minute)..."
+  install_az_local || log "WARNING: az install failed"
 fi
 
 if have az; then
@@ -166,10 +172,10 @@ if have az; then
   fi
 fi
 
-if have python3 && python3 -c 'import yaml' 2>/dev/null; then log "python3 already installed ($(python3 --version))"
+if have python3 && python3 -c 'import yaml' 2>/dev/null; then log "python3 available ($(python3 --version))"
 else
-  log "installing python3 + pyyaml..."
-  { can_apt && install_python_apt; } || install_python_local || log "WARNING: python3 install failed"
+  log "installing python3 + pyyaml without root..."
+  install_python_local || log "WARNING: python3 install failed"
 fi
 
 if have node && have npx; then log "node already installed ($(node --version))"
@@ -185,11 +191,7 @@ else
   install_nextest || log "WARNING: cargo-nextest install failed"
 fi
 
-if have java && have dot; then log "java + graphviz already installed"
-else
-  log "installing java + graphviz (for PlantUML)..."
-  { can_apt && install_java_graphviz_apt; } || log "WARNING: java + graphviz install failed (needs apt + sudo)"
-fi
+have java && have dot || log "WARNING: java + graphviz missing (PlantUML needs apt + sudo)"
 
 if plantuml_ok; then log "plantuml $PLANTUML_VERSION already installed"
 else
@@ -197,11 +199,7 @@ else
   install_plantuml_jar || log "WARNING: plantuml install failed"
 fi
 
-if have pdftoppm && have pdftotext; then log "poppler-utils already installed"
-else
-  log "installing poppler-utils (for reading PDF files)..."
-  { can_apt && install_poppler_apt; } || log "WARNING: poppler-utils install failed (needs apt + sudo)"
-fi
+have pdftoppm && have pdftotext || log "WARNING: poppler-utils missing (needs apt + sudo)"
 
 have gh && log "gh: $(command -v gh)"
 have az && log "az: $(command -v az)"

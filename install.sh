@@ -14,6 +14,15 @@ export REPOS_DIR
 
 mkdir -p "$BIN" "$CFG"
 
+# Log every run (Ona's own dotfiles log is not always reachable) and time each
+# step, so a slow setup shows where the time goes.
+LOG="$HOME/.cache/ona-config/install.log"
+mkdir -p "$(dirname "$LOG")"
+exec > >(tee -a "$LOG") 2>&1
+echo "=== ona-config install $(date -Is)"
+STEP_T=$SECONDS
+took() { echo "[install] $1: $((SECONDS - STEP_T))s"; STEP_T=$SECONDS; }
+
 # 0. Private config (accounts.conf, repos.txt, ...) and the Claude skills live in a
 #    private repo. Clone it with PRIVATE_GITHUB_TOKEN directly: the credential
 #    helper needs accounts.conf, which is in that repo. An existing clone is kept.
@@ -37,6 +46,7 @@ else
   echo "warning: no private config in $PRIVATE_DIR: no accounts, repos or skills" >&2
 fi
 ACCOUNTS="$CFG/accounts.conf"
+took "private repo"
 
 # 1. Install tools (symlinks so `git pull` in the dotfiles updates them)
 for f in "$DOT"/bin/*; do
@@ -87,10 +97,12 @@ if [[ -n "$name" && "$name" != "Your Name" ]]; then git config --global user.nam
 if [[ -n "${GACCT_DEFAULT:-}" ]]; then
   "$BIN/gacct" use "$GACCT_DEFAULT" || true
 fi
+took "links + git config"
 
 # 6. CLI tools: gh + az (with azure-devops extension). Skip with SKIP_TOOLS=1.
 if [[ -z "${SKIP_TOOLS:-}" ]]; then
   bash "$DOT/scripts/install-tools.sh" || echo "warning: tool installation had errors"
+  took "CLI tools"
 fi
 
 # 7. az devops defaults (org from the ado line, project from #@ado_project)
@@ -101,18 +113,21 @@ if command -v az >/dev/null 2>&1 && [[ -r "$ACCOUNTS" ]]; then
     az devops configure --defaults "organization=https://dev.azure.com/$ado_org" \
       ${ado_project:+"project=$ado_project"} --only-show-errors || true
   fi
+  took "az devops defaults"
 fi
 
 # 8. Clone the repos listed in the private repos.txt (needs the credential helper from step 3).
 #    Skip with SKIP_CLONE=1; target dir via REPOS_DIR.
 if [[ -z "${SKIP_CLONE:-}" ]]; then
   bash "$DOT/scripts/clone-repos.sh" || echo "warning: repo cloning had errors"
+  took "clone repos"
 fi
 
 # 9. Claude Code skills of the private repo: link them into ~/.claude/skills and
 #    the clones of project-links.txt into ~/Projects. Skip with SKIP_SKILLS=1.
 if [[ -z "${SKIP_SKILLS:-}" ]]; then
   bash "$DOT/scripts/setup-skills.sh" || echo "warning: skills setup had errors"
+  took "skills"
 fi
 
 # 10. Claude Code settings: no Co-Authored-By trailer / PR attribution.
@@ -122,10 +137,13 @@ bash "$DOT/scripts/setup-claude-settings.sh" || echo "warning: Claude settings s
 #     exists yet; shell/env.sh retries in the background. Skip with SKIP_VSCODE_EXT=1.
 if [[ -z "${SKIP_VSCODE_EXT:-}" ]]; then
   bash "$DOT/scripts/install-vscode-extensions.sh" || echo "warning: VS Code extension setup had errors"
+  took "VS Code extensions"
 fi
 
 # 12. VS Code remote settings (vscode-machine-settings.json, e.g. the PlantUML jar)
 #     into the VS Code server, if one exists yet; shell/env.sh retries in the background.
 bash "$DOT/scripts/setup-vscode-settings.sh" || echo "warning: VS Code settings setup had errors"
 
+took "Claude + VS Code settings"
+echo "[install] total: ${SECONDS}s (log: $LOG)"
 echo "ona-config installed. Run 'gacct list' to see your accounts."

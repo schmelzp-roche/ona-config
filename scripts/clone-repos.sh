@@ -4,13 +4,17 @@
 # Existing directories are skipped, so local work is never touched.
 #   REPOS_DIR   target directory      (default: /workspaces/workspaces)
 #   CLONE_JOBS  parallel clones       (default: 6)
+#   CLONE_FILTER  partial-clone filter (default: blob:none, empty = full clone).
+#               blob:none fetches all commits but only the file contents of the
+#               checkout; older contents follow on demand (git log -p, blame).
 set -uo pipefail
 
 DOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIST="${1:-$HOME/.config/gacct/private/config/repos.txt}"
 REPOS_DIR="${REPOS_DIR:-/workspaces/workspaces}"
 JOBS="${CLONE_JOBS:-6}"
-export PATH="$HOME/.local/bin:$PATH" GIT_TERMINAL_PROMPT=0 REPOS_DIR
+CLONE_FILTER="${CLONE_FILTER-blob:none}"
+export PATH="$HOME/.local/bin:$PATH" GIT_TERMINAL_PROMPT=0 REPOS_DIR CLONE_FILTER
 
 [[ -r "$LIST" ]] || { echo "[clone-repos] no $LIST, nothing to do"; exit 0; }
 mkdir -p "$REPOS_DIR"
@@ -20,7 +24,7 @@ clone_one() {
   [[ -n "$dir" ]] || { dir="$(basename "$url")"; dir="${dir%.git}"; }
   local path="$REPOS_DIR/$dir"
   if [[ -e "$path" ]]; then echo "[clone-repos] skip   $dir (exists)"; return 0; fi
-  if git clone --quiet "$url" "$path" 2>"/tmp/clone-$dir.err"; then
+  if git clone --quiet ${CLONE_FILTER:+--filter="$CLONE_FILTER"} "$url" "$path" 2>"/tmp/clone-$dir.err"; then
     (cd "$path" && gacct here >/dev/null 2>&1)
     echo "[clone-repos] cloned $dir"
   else

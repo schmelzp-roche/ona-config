@@ -71,9 +71,17 @@ Tip: run `gacct here` after cloning, so your commits use the matching email.
 
 ## CLI tools (installed on startup)
 
-`install.sh` also installs **gh** (GitHub CLI) and **az** (Azure CLI + `azure-devops`
-extension) via the official apt repos (falls back to a no-root install). Set
-`SKIP_TOOLS=1` to skip.
+`install.sh` also installs **gh** (GitHub CLI, release tarball into `~/.local/bin`) and
+**az** (Azure CLI + `azure-devops` extension, Microsoft apt repo; falls back to a no-root
+install). Set `SKIP_TOOLS=1` to skip.
+
+All missing apt packages are installed with a single `apt-get update` + `apt-get install`.
+Plain HTTP to the Ubuntu mirrors is very slow from the Ona network (an `apt-get update`
+took almost 9 minutes), so `scripts/install-tools.sh` switches them to HTTPS, drops the
+backports suite and skips the translation files (`/etc/apt/apt.conf.d/99ona-config`).
+
+Each run of `install.sh` is logged with the time of every step to
+`~/.cache/ona-config/install.log`.
 
 It also installs **Java**, **Graphviz** and **PlantUML** (see [PlantUML diagrams](#plantuml-diagrams)), and **poppler-utils** (`pdftoppm`, `pdftotext`), so that Claude Code can read PDF files.
 
@@ -101,6 +109,9 @@ email (`gacct here`) and is hidden from the enclosing repo's `git status`.
   optional dir name after it)
 - Re-run any time: `bash ~/…/ona-config/scripts/clone-repos.sh`
 - Options: `REPOS_DIR=/some/dir`, `CLONE_JOBS=8`, `SKIP_CLONE=1`
+- Partial clones (`--filter=blob:none`): all commits, but only the file contents of the
+  checkout; older contents are fetched on demand (`git log -p`, `git blame`). For a full
+  clone set `CLONE_FILTER=`
 
 ## Claude Code skills
 
